@@ -1,26 +1,24 @@
 """
-Thousand-Token Theater — a Gradio Space for the Build Small Hackathon
+Thousand-Token Theater — Gradio 6 Space for the Build Small Hackathon
 (track: Adventure in Thousand Token Wood).
 
-A troupe of small-model actors (MiniCPM4.1-8B, running on the Space's ZeroGPU)
-improvises a one-act play that YOU direct. The catch that gives the piece its
-name: the troupe's entire shared memory of the play is hard-capped at 1,000
-tokens, measured by MiniCPM's own tokenizer. As the script grows, the oldest
-beats are forgotten — and the actors carry on with only what still fits. You
-watch the play remember, drift, and forget in real time.
-
-The model is genuinely invoked (see model.py). Nothing on stage is pre-written.
+A troupe of small-model actors (MiniCPM4.1-8B on ZeroGPU) improvises a one-act
+play you direct. Each line is streamed live onto the stage as the model writes
+it. The troupe's whole shared memory is hard-capped at 1,000 tokens (MiniCPM's
+own tokenizer); past the cap the oldest beats are forgotten — and the play drifts.
+The model is genuinely invoked (see model.py); nothing on stage is pre-written.
 """
 
 from __future__ import annotations
 
 import html
 import random
+import re
 
 import gradio as gr
 
 import model  # real MiniCPM boundary (loads on the Space's GPU)
-from theater import TheaterEngine, SETTINGS
+from theater import TheaterEngine, NARRATOR
 
 BUDGET = 1000
 
@@ -45,20 +43,24 @@ TWISTS = [
 ]
 
 CHAR_COLOR = {
-    "The Narrator": "#e6b15c",
-    "Bramblewhisker": "#d08a4a",
-    "Pip": "#7fc1d6",
-    "Maestro Croak": "#8fb15a",
-    "Stage Direction": "#9a8f86",
+    "The Narrator": "#e8c275",
+    "Bramblewhisker": "#e0975a",
+    "Pip": "#86c9dd",
+    "Maestro Croak": "#9cc05f",
+    "Stage Direction": "#a89a8c",
 }
 
 
 def new_engine() -> TheaterEngine:
-    return TheaterEngine(
-        generate_fn=model.generate,
-        count_tokens_fn=model.count_tokens,
-        budget_tokens=BUDGET,
-    )
+    return TheaterEngine(generate_fn=model.generate,
+                         count_tokens_fn=model.count_tokens, budget_tokens=BUDGET)
+
+
+def _light_clean(text: str, name: str) -> str:
+    t = re.sub(r"<think>.*?</think>", "", text or "", flags=re.DOTALL | re.IGNORECASE)
+    t = re.sub(r"</?think>", "", t, flags=re.IGNORECASE)
+    t = re.sub(rf"^\s*{re.escape(name)}\s*[:\-]\s*", "", t, flags=re.IGNORECASE)
+    return t.strip()
 
 
 # --------------------------------------------------------------------------- #
@@ -67,7 +69,6 @@ def new_engine() -> TheaterEngine:
 
 def _fmt_text(text: str) -> str:
     safe = html.escape(text)
-    # *stage action* -> italic
     out, em = [], False
     for chunk in safe.split("*"):
         out.append(f"<em>{chunk}</em>" if em and chunk else chunk)
@@ -75,28 +76,29 @@ def _fmt_text(text: str) -> str:
     return "".join(out).replace("\n", "<br>")
 
 
-def render_stage(engine: TheaterEngine) -> str:
-    if engine is None or not engine.memory:
-        return ("<div class='stage empty'>The stage is dark. "
-                "Choose a setting and <b>raise the curtain</b>.</div>")
-    rows = []
-    for b in engine.memory:
-        color = CHAR_COLOR.get(b.speaker, "#cfc4b8")
-        if b.kind == "direction":
-            rows.append(
-                f"<div class='beat direction'>🎬 <span>{_fmt_text(b.text)}</span></div>"
-            )
-        else:
-            rows.append(
-                f"<div class='beat'>"
-                f"<div class='who' style='color:{color}'>{b.emoji} {html.escape(b.speaker)}</div>"
-                f"<div class='said'>{_fmt_text(b.text)}</div>"
-                f"</div>"
-            )
+def _beat_html(speaker, emoji, text, kind, live=False):
+    if kind == "direction":
+        return f"<div class='beat direction'>🎬 <span>{_fmt_text(text)}</span></div>"
+    color = CHAR_COLOR.get(speaker, "#cfc4b8")
+    cursor = "<span class='cursor'>▌</span>" if live else ""
+    return (f"<div class='beat'><div class='who' style='color:{color}'>{emoji} "
+            f"{html.escape(speaker)}</div><div class='said'>{_fmt_text(text)}{cursor}</div></div>")
+
+
+def render_stage(engine, live=None) -> str:
+    if engine is None or (not engine.memory and not live):
+        return ("<div class='stage'><div class='stage-empty'>"
+                "<div class='masklogo'>🎭</div>"
+                "<p>The stage is dark.</p>"
+                "<p class='sub'>Choose a setting and <b>raise the curtain</b>.</p>"
+                "</div></div>")
+    rows = [_beat_html(b.speaker, b.emoji, b.text, b.kind) for b in engine.memory]
+    if live:
+        rows.append(_beat_html(live[0], live[1], live[2] or "…", "line", live=True))
     return f"<div class='stage'>{''.join(rows)}</div>"
 
 
-def render_meter(engine: TheaterEngine) -> str:
+def render_meter(engine) -> str:
     tokens = engine.memory_tokens() if engine else 0
     frac = (tokens / BUDGET) if engine else 0.0
     pct = min(100, round(frac * 100))
@@ -107,39 +109,32 @@ def render_meter(engine: TheaterEngine) -> str:
             if frac >= 0.85 else "")
     return f"""
     <div class='meter-wrap'>
-      <div class='meter-top'>
-        <span>🧠 Troupe memory</span>
-        <span class='meter-num'>{tokens} / {BUDGET} tokens</span>
-      </div>
+      <div class='meter-top'><span>🧠 Troupe memory</span>
+        <span class='meter-num'>{tokens} / {BUDGET} tokens</span></div>
       <div class='meter-bar'><div class='meter-fill' style='width:{pct}%;background:{color}'></div></div>
-      <div class='meter-bottom'>
-        <span>🎭 {remembered} beats on stage</span>
-        <span>🍂 {forgotten} forgotten</span>
-      </div>
+      <div class='meter-bottom'><span>🎭 {remembered} on stage</span>
+        <span>🍂 {forgotten} forgotten</span></div>
       {edge}
-    </div>
-    """
+    </div>"""
 
 
-def render_forgotten(engine: TheaterEngine) -> str:
+def render_forgotten(engine) -> str:
     if engine is None or not engine.forgotten:
-        return ("<div class='forgotten empty'>Nothing forgotten yet. "
-                "Keep the play going — at 1,000 tokens, the troupe starts to forget.</div>")
-    just = engine.last_forgotten
+        return ("<div class='forgotten empty'>Nothing forgotten yet. Keep the play going — "
+                "at 1,000 tokens the troupe starts to forget its own story.</div>")
     blocks = []
+    just = engine.last_forgotten
     if just:
         items = "".join(f"<li>{_fmt_text(b.script_line())}</li>" for b in just)
         blocks.append(f"<div class='just-forgot'><div class='ff-head'>Just slipped away…</div><ul>{items}</ul></div>")
-    # a faint echo of older forgotten lines
     older = engine.forgotten[:-len(just)] if just else engine.forgotten
     if older:
-        tail = older[-4:]
-        items = "".join(f"<li>{_fmt_text(b.script_line())}</li>" for b in tail)
+        items = "".join(f"<li>{_fmt_text(b.script_line())}</li>" for b in older[-4:])
         blocks.append(f"<div class='old-forgot'><div class='ff-head'>Lost earlier ({len(older)} total)</div><ul>{items}</ul></div>")
     return f"<div class='forgotten'>{''.join(blocks)}</div>"
 
 
-def render_status(engine: TheaterEngine, msg: str = "") -> str:
+def render_status(engine, msg: str = "") -> str:
     if engine is None:
         return msg or "Raise the curtain to begin."
     nxt = engine.next_speaker()
@@ -147,42 +142,51 @@ def render_status(engine: TheaterEngine, msg: str = "") -> str:
     return f"{base} — {msg}" if msg else base
 
 
-def _views(engine: TheaterEngine, msg: str = ""):
-    return (
-        render_stage(engine),
-        render_meter(engine),
-        render_forgotten(engine),
-        render_status(engine, msg),
-        engine,
-    )
-
-
 # --------------------------------------------------------------------------- #
-# Event handlers
+# Event handlers (streaming generators)
 # --------------------------------------------------------------------------- #
 
 def on_start(setting_label, premise, _engine):
     engine = new_engine()
     key = SETTING_LABELS.get(setting_label, "woodland")
-    engine.start_play(key, premise=(premise or "").strip())
-    return _views(engine, "The curtain rises. Press ▶ to let the troupe play on.")
+    messages = engine.prepare_opening(key, premise=(premise or "").strip())
+    partial = ""
+    for partial in model.generate_stream(messages):
+        live = (NARRATOR.name, NARRATOR.emoji, _light_clean(partial, NARRATOR.name))
+        yield (render_stage(engine, live=live), render_meter(engine),
+               render_forgotten(engine), "🎙️ The Narrator sets the scene…", engine)
+    engine.commit_opening(partial)
+    yield (render_stage(engine), render_meter(engine), render_forgotten(engine),
+           render_status(engine, "The curtain rises. Press ▶ to let the troupe play on."), engine)
+
+
+def _run_beat(engine, note, status_suffix):
+    speaker, messages = engine.prepare_beat(note)
+    partial = ""
+    for partial in model.generate_stream(messages):
+        live = (speaker.name, speaker.emoji, _light_clean(partial, speaker.name))
+        yield (render_stage(engine, live=live), render_meter(engine),
+               render_forgotten(engine), f"{speaker.emoji} **{speaker.name}** is speaking…", engine, "")
+    engine.commit_beat(speaker, partial)
+    yield (render_stage(engine), render_meter(engine), render_forgotten(engine),
+           render_status(engine, status_suffix), engine, "")
 
 
 def on_next(note, engine):
     if engine is None:
-        return _views(None, "Raise the curtain first 🎭")
-    engine.advance(note or "")
-    return render_stage(engine), render_meter(engine), render_forgotten(engine), \
-        render_status(engine), engine, ""  # clear the director box
+        yield (render_stage(None), render_meter(None), render_forgotten(None),
+               "Raise the curtain first 🎭", None, "")
+        return
+    yield from _run_beat(engine, note or "", "")
 
 
 def on_twist(engine):
     if engine is None:
-        return _views(None, "Raise the curtain first 🎭") + ("",)
+        yield (render_stage(None), render_meter(None), render_forgotten(None),
+               "Raise the curtain first 🎭", None, "")
+        return
     twist = random.choice(TWISTS)
-    engine.advance(twist)
-    return render_stage(engine), render_meter(engine), render_forgotten(engine), \
-        render_status(engine, f"Twist thrown: *{twist}*"), engine, ""
+    yield from _run_beat(engine, twist, f"Twist thrown: *{twist}*")
 
 
 # --------------------------------------------------------------------------- #
@@ -190,69 +194,103 @@ def on_twist(engine):
 # --------------------------------------------------------------------------- #
 
 CSS = """
-.gradio-container {max-width: 1080px !important;}
-#title {text-align:center; font-family: 'Georgia', serif;}
-#title h1 {font-size: 2.4rem; margin-bottom: .2rem; color:#f0e6d2;}
-#title p {color:#bdae99; margin-top:0;}
-.stage {background:#171310; border:1px solid #2e2722; border-radius:12px; padding:18px 20px;
-        min-height:320px; max-height:460px; overflow-y:auto; font-family:'Georgia',serif;
-        box-shadow: inset 0 0 60px rgba(0,0,0,.55);}
-.stage.empty {display:flex; align-items:center; justify-content:center; color:#7d7064; text-align:center;}
-.beat {margin:0 0 14px 0;}
-.beat .who {font-weight:700; letter-spacing:.03em; font-size:.95rem; margin-bottom:2px;}
-.beat .said {color:#e9ded0; line-height:1.5;}
-.beat .said em {color:#c9b89f;}
-.beat.direction {color:#9a8f86; font-style:italic; border-left:2px solid #3a322b; padding-left:10px; margin:10px 0;}
-.meter-wrap {background:#15120f; border:1px solid #2e2722; border-radius:10px; padding:12px 14px; margin-top:8px;}
-.meter-top, .meter-bottom {display:flex; justify-content:space-between; font-size:.85rem; color:#bdae99;}
-.meter-num {font-variant-numeric: tabular-nums; color:#e9ded0;}
-.meter-bar {height:12px; background:#241f1a; border-radius:6px; overflow:hidden; margin:8px 0;}
-.meter-fill {height:100%; border-radius:6px; transition:width .4s ease;}
-.meter-note {color:#d8893f; font-size:.8rem; margin-top:6px; font-style:italic;}
-.forgotten {background:#13100e; border:1px dashed #36302a; border-radius:10px; padding:10px 14px; font-size:.86rem;}
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700;800&family=EB+Garamond:ital@0;1&display=swap');
+.gradio-container {max-width: 1100px !important;
+  background:
+    radial-gradient(1200px 500px at 50% -10%, rgba(224,151,90,0.10), transparent 60%),
+    radial-gradient(900px 600px at 50% 120%, rgba(120,60,30,0.16), transparent 60%),
+    #120e0c !important;}
+#playbill {text-align:center; padding:18px 0 6px; font-family:'Playfair Display',Georgia,serif;}
+#playbill .ribbon {color:#caa46a; letter-spacing:.42em; font-size:.72rem; text-transform:uppercase; font-family:'EB Garamond',serif;}
+#playbill h1 {font-size:2.9rem; font-weight:800; margin:.12em 0 .05em; color:#f3e7cf;
+  text-shadow:0 2px 18px rgba(224,151,90,.25); letter-spacing:.01em;}
+#playbill .rule {width:220px; height:1px; margin:8px auto 10px;
+  background:linear-gradient(90deg,transparent,#caa46a,transparent);}
+#playbill p.tag {color:#c3b39a; font-family:'EB Garamond',serif; font-size:1.02rem; max-width:760px; margin:0 auto;}
+.stage {background:
+    linear-gradient(180deg, rgba(0,0,0,.35), rgba(0,0,0,.0) 18%),
+    radial-gradient(120% 80% at 50% 120%, rgba(232,165,90,.10), transparent 55%),
+    #15100d;
+  border:1px solid #34291f; border-radius:14px; padding:22px 24px;
+  min-height:360px; max-height:500px; overflow-y:auto;
+  font-family:'EB Garamond',Georgia,serif; font-size:1.08rem;
+  box-shadow:inset 0 0 80px rgba(0,0,0,.6), 0 8px 30px rgba(0,0,0,.35);}
+.stage-empty {height:320px; display:flex; flex-direction:column; align-items:center; justify-content:center; color:#7d7064; text-align:center;}
+.stage-empty .masklogo {font-size:3rem; opacity:.7; margin-bottom:.3em;}
+.stage-empty .sub {font-size:.95rem;}
+.beat {margin:0 0 15px 0; animation:rise .35s ease;}
+@keyframes rise {from{opacity:0; transform:translateY(4px)} to{opacity:1; transform:none}}
+.beat .who {font-family:'Playfair Display',serif; font-weight:700; letter-spacing:.02em; font-size:.98rem; margin-bottom:2px;}
+.beat .said {color:#ece1cf; line-height:1.6;}
+.beat .said em {color:#d8c4a3;}
+.beat.direction {color:#a89a8c; font-style:italic; border-left:2px solid #4a3c2c; padding-left:12px; margin:12px 0;}
+.cursor {color:#e8c275; font-weight:700; animation:blink 1s steps(2) infinite; margin-left:1px;}
+@keyframes blink {0%,50%{opacity:1} 51%,100%{opacity:0}}
+.meter-wrap {background:#171210; border:1px solid #34291f; border-radius:12px; padding:13px 15px; margin-top:6px; font-family:'EB Garamond',serif;}
+.meter-top,.meter-bottom {display:flex; justify-content:space-between; font-size:.86rem; color:#c3b39a;}
+.meter-num {font-variant-numeric:tabular-nums; color:#f0e3cd;}
+.meter-bar {height:13px; background:#251c16; border-radius:7px; overflow:hidden; margin:8px 0; box-shadow:inset 0 1px 3px rgba(0,0,0,.5);}
+.meter-fill {height:100%; border-radius:7px; transition:width .45s ease;}
+.meter-note {color:#e0903c; font-size:.82rem; margin-top:6px; font-style:italic;}
+.forgotten {background:#140f0d; border:1px dashed #3c3026; border-radius:12px; padding:11px 15px; font-size:.88rem; font-family:'EB Garamond',serif;}
 .forgotten.empty {color:#6f6458; font-style:italic;}
-.forgotten .ff-head {color:#a06a3a; font-weight:700; margin:4px 0; text-transform:uppercase; letter-spacing:.08em; font-size:.72rem;}
+.forgotten .ff-head {color:#b0703a; font-weight:700; margin:5px 0; text-transform:uppercase; letter-spacing:.1em; font-size:.72rem; font-family:'Playfair Display',serif;}
 .forgotten ul {margin:2px 0 10px 0; padding-left:16px;}
-.just-forgot li {color:#caa37e;}
+.just-forgot li {color:#d8b88c;}
 .old-forgot li {color:#6f6458;}
+#howto {color:#8f8273; font-family:'EB Garamond',serif; font-size:.92rem; text-align:center; margin-top:4px;}
+"""
+
+AUTOSCROLL_JS = """
+() => {
+  const mount = document.querySelector('#stage-html');
+  if (!mount || mount.dataset.bound) return;
+  mount.dataset.bound = '1';
+  const obs = new MutationObserver(() => {
+    const s = mount.querySelector('.stage');
+    if (s) s.scrollTop = s.scrollHeight;
+  });
+  obs.observe(mount, {childList: true, subtree: true, characterData: true});
+}
 """
 
 with gr.Blocks(title="Thousand-Token Theater") as demo:
     engine_state = gr.State(value=None)
 
     gr.HTML(
-        "<div id='title'><h1>🎭 Thousand-Token Theater</h1>"
-        "<p>A troupe of tiny MiniCPM actors improvises a play you direct — "
-        "but their whole memory is capped at 1,000 tokens. What they forget becomes the story.</p></div>"
+        "<div id='playbill'>"
+        "<div class='ribbon'>Build Small Hackathon · Thousand Token Wood</div>"
+        "<h1>🎭 Thousand-Token Theater</h1>"
+        "<div class='rule'></div>"
+        "<p class='tag'>A troupe of tiny <b>MiniCPM</b> actors improvises a play you direct — "
+        "performed live, line by line. But their entire memory is capped at "
+        "<b>1,000 tokens</b>, so the story you build slowly drifts and forgets itself.</p>"
+        "</div>"
     )
 
     with gr.Row():
         with gr.Column(scale=3):
-            stage = gr.HTML(render_stage(None))
+            stage = gr.HTML(render_stage(None), elem_id="stage-html")
             with gr.Row():
                 director_box = gr.Textbox(
-                    placeholder="Whisper a stage direction… (e.g. 'a stranger knocks') — or leave empty",
+                    placeholder="Whisper a stage direction… e.g. 'a stranger knocks' (or leave empty)",
                     label="Director", scale=4, lines=1,
                 )
                 next_btn = gr.Button("Next beat ▶", scale=1, variant="primary")
                 twist_btn = gr.Button("Twist 🎲", scale=1)
             status = gr.Markdown(render_status(None))
         with gr.Column(scale=2):
-            setting = gr.Dropdown(
-                choices=list(SETTING_LABELS.keys()),
-                value=list(SETTING_LABELS.keys())[0],
-                label="Setting",
-            )
+            setting = gr.Dropdown(choices=list(SETTING_LABELS.keys()),
+                                  value=list(SETTING_LABELS.keys())[0], label="Setting")
             premise = gr.Textbox(label="Premise (optional)",
                                  placeholder="e.g. someone here is secretly a king")
-            start_btn = gr.Button("🎬 Raise the curtain", variant="primary")
+            start_btn = gr.Button("🎬 Raise the curtain", variant="primary", size="lg")
             meter = gr.HTML(render_meter(None))
             forgotten = gr.HTML(render_forgotten(None))
 
-    gr.Markdown(
-        "Built for the **Build Small Hackathon** · *Adventure in Thousand Token Wood*. "
-        "Runs **openbmb/MiniCPM4.1-8B** on ZeroGPU. The 1,000-token cap is enforced by "
-        "MiniCPM's own tokenizer — the forgetting is real, not scripted."
+    gr.HTML(
+        "<div id='howto'>Runs <b>openbmb/MiniCPM4.1-8B</b> live on ZeroGPU. "
+        "The 1,000-token cap is enforced by MiniCPM's own tokenizer — the forgetting is real, not scripted.</div>"
     )
 
     start_btn.click(on_start, [setting, premise, engine_state],
@@ -261,7 +299,9 @@ with gr.Blocks(title="Thousand-Token Theater") as demo:
                    [stage, meter, forgotten, status, engine_state, director_box])
     twist_btn.click(on_twist, [engine_state],
                     [stage, meter, forgotten, status, engine_state, director_box])
+    demo.load(None, None, None, js=AUTOSCROLL_JS)
 
 if __name__ == "__main__":
-    # Gradio 6: theme and css are passed to launch() (not the Blocks constructor).
-    demo.queue(max_size=24).launch(theme=gr.themes.Base(), css=CSS)
+    # Gradio 6: theme and css go to launch(), not the Blocks constructor.
+    demo.queue(max_size=24).launch(
+        theme=gr.themes.Base(primary_hue="amber", neutral_hue="stone"), css=CSS)

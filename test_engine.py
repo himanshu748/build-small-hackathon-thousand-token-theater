@@ -47,7 +47,6 @@ def main():
         generate_fn=fake_generate,
         count_tokens_fn=heuristic_tokens,
         budget_tokens=120,   # small cap so eviction triggers fast in the test
-        seed=7,
     )
 
     eng.start_play("woodland", premise="someone in the troupe is secretly a king")

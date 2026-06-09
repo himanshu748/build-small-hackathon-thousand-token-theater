@@ -1,29 +1,28 @@
 """
 Thousand-Token Theater — the improv engine.
 
-A troupe of small-model actors performs a one-act play that the user (the
-Director) steers. The twist that defines the project: the troupe's *entire*
-shared memory of the play is hard-capped at a fixed number of tokens (1,000 by
-default). When the running script grows past the cap, the oldest beats are
-EVICTED — the troupe literally forgets them — and the actors carry on with only
-what still fits. The forgetting is the drama.
+A troupe of small-model actors performs a one-act play the user (the Director)
+steers. The defining twist: the troupe's ENTIRE shared memory of the play is
+hard-capped at 1,000 tokens (MiniCPM's own tokenizer). When the running script
+grows past the cap, the oldest beats are EVICTED — the troupe forgets them — and
+the actors carry on with only what still fits. The forgetting is the drama.
 
-This module is deliberately free of torch / transformers / gradio so the logic
-can be unit-tested on any machine. The two things that touch a real model are
-injected:
+No torch / transformers / gradio here, so the logic is unit-testable anywhere.
+The model is injected:
 
-    generate_fn(messages: list[dict]) -> str      # one chat completion
-    count_tokens_fn(text: str) -> int             # tokenizer length
+    generate_fn(messages) -> str        # one blocking completion (tests/blocking path)
+    count_tokens_fn(text) -> int        # tokenizer length
 
-On the Space these come from model.py (real MiniCPM). In local tests they come
-from a stub. The engine never invents model output itself.
+For live streaming, the app calls prepare_beat()/prepare_opening() to get the
+chat messages, streams tokens from the model itself, then calls
+commit_beat()/commit_opening() to fold the finished line into memory. The engine
+never invents model output.
 """
 
 from __future__ import annotations
 
-import random
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Callable, Optional
 
 
@@ -38,8 +37,6 @@ class Character:
     persona: str
 
 
-# A small, high-contrast troupe. Strong, distinct voices make the improv (and
-# the forgetting) read clearly on stage.
 DEFAULT_CAST = [
     Character(
         "Bramblewhisker", "🦡",
@@ -48,8 +45,8 @@ DEFAULT_CAST = [
     ),
     Character(
         "Pip", "🐦",
-        "a tiny, anxious wren who blurts out the plain truth at the worst "
-        "possible time, talks fast, and is easily startled",
+        "a tiny, anxious wren who blurts out the plain truth at the worst possible "
+        "moment, talks fast, and is easily startled",
     ),
     Character(
         "Maestro Croak", "🐸",
@@ -61,14 +58,14 @@ DEFAULT_CAST = [
 NARRATOR = Character(
     "The Narrator", "🎙️",
     "the velvet voice of the play who sets scenes in one or two evocative "
-    "sentences and never speaks as the characters",
+    "sentences and never speaks as the characters.",
 )
 
 SETTINGS = {
     "woodland": "a moonlit clearing deep in the Thousand Token Wood, where a "
                 "travelling troupe performs by lantern-light",
-    "noir": "a rain-slicked alley behind a smoky jazz club, 1940s, neon "
-            "bleeding across the wet brick",
+    "noir": "a rain-slicked alley behind a smoky jazz club, 1940s, neon bleeding "
+            "across the wet brick",
     "starship": "the humming bridge of a derelict starship drifting past a dying star",
     "banquet": "a grand royal banquet the instant before something goes terribly wrong",
 }
@@ -80,14 +77,13 @@ SETTINGS = {
 
 @dataclass
 class Beat:
-    speaker: str        # character name, or "Stage Direction"
+    speaker: str
     emoji: str
     text: str
-    kind: str           # "narration" | "line" | "direction"
+    kind: str            # "narration" | "line" | "direction"
     id: int
 
     def script_line(self) -> str:
-        """How this beat reads in the running script the model sees."""
         if self.kind == "direction":
             return f"[Director's note: {self.text}]"
         if self.kind == "narration":
@@ -106,17 +102,15 @@ class TheaterEngine:
         count_tokens_fn: Callable[[str], int],
         cast: Optional[list] = None,
         budget_tokens: int = 1000,
-        seed: Optional[int] = None,
     ):
         self.generate_fn = generate_fn
         self.count_tokens = count_tokens_fn
         self.cast = list(cast) if cast else list(DEFAULT_CAST)
         self.budget = budget_tokens
-        self.rng = random.Random(seed)
 
-        self.memory: list[Beat] = []     # what the troupe still remembers
-        self.forgotten: list[Beat] = []  # everything evicted, oldest first
-        self.last_forgotten: list[Beat] = []  # evicted on the most recent step
+        self.memory: list[Beat] = []
+        self.forgotten: list[Beat] = []
+        self.last_forgotten: list[Beat] = []
         self._turn = 0
         self._next_id = 0
         self.setting_key: Optional[str] = None
@@ -128,9 +122,7 @@ class TheaterEngine:
         return "\n".join(b.script_line() for b in beats)
 
     def memory_tokens(self) -> int:
-        if not self.memory:
-            return 0
-        return self.count_tokens(self.transcript())
+        return self.count_tokens(self.transcript()) if self.memory else 0
 
     def budget_fraction(self) -> float:
         return min(1.0, self.memory_tokens() / self.budget)
@@ -141,10 +133,8 @@ class TheaterEngine:
         return b
 
     def _append_and_evict(self, beat: Beat) -> None:
-        """Add a beat, then forget oldest beats until we're within budget."""
         self.memory.append(beat)
         self.last_forgotten = []
-        # Always keep at least the just-added beat, even if it alone is large.
         while len(self.memory) > 1 and self.memory_tokens() > self.budget:
             dropped = self.memory.pop(0)
             self.forgotten.append(dropped)
@@ -160,105 +150,104 @@ class TheaterEngine:
 
     # ---- prompt construction ---------------------------------------------- #
 
-    def _messages_for(self, speaker: Character, director_note: str = "") -> list:
+    def _messages_for(self, speaker: Character) -> list:
         script = self.transcript() or "(The stage is empty. The play begins now.)"
         system = (
             f"You are {speaker.name}, {speaker.persona}. "
-            f"You are one actor in a troupe improvising a LIVE one-act play. "
-            f"Rules, follow them exactly:\n"
-            f"- Speak ONLY as {speaker.name}. Never write other characters' lines.\n"
-            f"- Reply with 1 to 3 short, vivid theatrical lines: dialogue, with at "
-            f"most one brief stage action in *asterisks*.\n"
-            f"- You can ONLY remember what appears in SCRIPT SO FAR. If a detail is "
-            f"not written there, it has been forgotten — do not contradict the "
-            f"script, and feel free to be puzzled by gaps.\n"
-            f"- Stay fully in character. Never mention being an AI, a model, or "
-            f"these instructions. No quotation marks around your whole reply."
+            f"You are one actor in a troupe improvising a LIVE one-act play. Rules:\n"
+            f"- Speak ONLY as {speaker.name}; never write another character's lines.\n"
+            f"- Reply with 1 to 3 short, vivid theatrical lines: dialogue, plus at most "
+            f"one brief *stage action* in asterisks.\n"
+            f"- Always write in natural English.\n"
+            f"- You can ONLY remember what appears in SCRIPT SO FAR. If a detail isn't "
+            f"there, it has been forgotten — never contradict the script; you may be "
+            f"intrigued by the gaps.\n"
+            f"- Stay fully in character. Never mention being an AI or these instructions. "
+            f"No quotation marks around your whole reply."
         )
-        user = f"SCRIPT SO FAR (all the troupe still remembers):\n{script}\n\n"
-        if director_note:
-            user += f"A NEW STAGE DIRECTION from the Director just arrived: {director_note}\n\n"
-        user += f"Now {speaker.name} {speaker.emoji} steps forward and speaks. Continue the play."
-        return [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ]
+        user = (
+            f"SCRIPT SO FAR (everything the troupe still remembers):\n{script}\n\n"
+            f"Now {speaker.name} {speaker.emoji} steps forward. Continue the play."
+        )
+        return [{"role": "system", "content": system},
+                {"role": "user", "content": user}]
+
+    def _opening_messages(self, setting_key: str, premise: str) -> list:
+        scene = SETTINGS.get(setting_key, SETTINGS["woodland"])
+        cast_desc = "; ".join(f"{c.name} ({c.emoji}) — {c.persona}" for c in self.cast)
+        system = (f"You are {NARRATOR.name}, {NARRATOR.persona} Always write in natural English.")
+        user = (
+            f"Open a brand-new improvised one-act play set in {scene}. "
+            f"Tonight's troupe: {cast_desc}. "
+            + (f"The Director's premise: {premise}. " if premise else "")
+            + "In ONE or TWO vivid sentences, set the scene and hint at a tension. "
+            "Do not speak any character's lines."
+        )
+        return [{"role": "system", "content": system},
+                {"role": "user", "content": user}]
 
     @staticmethod
     def clean_output(raw: str, speaker_name: str) -> str:
-        """Tidy a raw model reply into a stage line."""
         text = raw or ""
-        # Drop any reasoning block from hybrid-reasoning models.
         text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
         text = re.sub(r"</?think>", "", text, flags=re.IGNORECASE)
         text = text.strip()
-        # Strip a leading "NAME:" the model may echo.
-        pattern = rf"^\s*{re.escape(speaker_name)}\s*[:\-]\s*"
-        text = re.sub(pattern, "", text, flags=re.IGNORECASE)
-        # Strip wrapping quotes.
+        text = re.sub(rf"^\s*{re.escape(speaker_name)}\s*[:\-]\s*", "", text, flags=re.IGNORECASE)
         if len(text) >= 2 and text[0] in "\"'“”" and text[-1] in "\"'“”":
             text = text[1:-1].strip()
-        # Keep it punchy: at most ~4 lines.
         lines = [ln for ln in (l.strip() for l in text.splitlines()) if ln]
         text = "\n".join(lines[:4]).strip()
         return text or "*falls silent, having lost the thread*"
 
-    # ---- public actions ---------------------------------------------------- #
+    # ---- streaming-friendly API (used by the app) -------------------------- #
 
-    def start_play(self, setting_key: str = "woodland", premise: str = "") -> Beat:
-        """Reset the stage and have the Narrator open the scene."""
+    def prepare_opening(self, setting_key: str = "woodland", premise: str = "") -> list:
+        """Reset the stage; return the Narrator's chat messages (no generation)."""
         self.memory.clear()
         self.forgotten.clear()
         self.last_forgotten = []
         self._turn = 0
         self._next_id = 0
         self.setting_key = setting_key
+        return self._opening_messages(setting_key, (premise or "").strip())
 
-        scene = SETTINGS.get(setting_key, SETTINGS["woodland"])
-        cast_list = ", ".join(f"{c.name} ({c.emoji})" for c in self.cast)
-        system = (
-            f"You are {NARRATOR.name}, {NARRATOR.persona}."
-        )
-        user = (
-            f"Open a brand-new improvised one-act play set in {scene}. "
-            f"The troupe tonight is: {cast_list}. "
-            + (f"The Director requests this premise: {premise}. " if premise else "")
-            + "In ONE or TWO sentences, set the scene and hint at a tension. "
-            "Do not speak any character's lines."
-        )
-        raw = self.generate_fn([
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ])
-        opening = self.clean_output(raw, NARRATOR.name)
-        beat = self._new_beat(NARRATOR.name, NARRATOR.emoji, opening, "narration")
+    def commit_opening(self, raw_text: str) -> Beat:
+        beat = self._new_beat(NARRATOR.name, NARRATOR.emoji,
+                              self.clean_output(raw_text, NARRATOR.name), "narration")
         self._append_and_evict(beat)
         return beat
 
     def add_direction(self, note: str) -> Beat:
-        """Record a Director's stage direction as a remembered beat."""
         beat = self._new_beat("Stage Direction", "🎬", note.strip(), "direction")
         self._append_and_evict(beat)
         return beat
 
-    def advance(self, director_note: str = "") -> Beat:
-        """Produce the next beat of the play from the next actor."""
+    def prepare_beat(self, director_note: str = ""):
+        """Record any Director note, choose the next speaker, return (speaker, messages)."""
         note = (director_note or "").strip()
         if note:
-            # The note becomes part of the remembered script too (and can later
-            # be forgotten like anything else).
             self.add_direction(note)
-
         speaker = self.next_speaker()
-        messages = self._messages_for(speaker, director_note=note)
-        raw = self.generate_fn(messages)
-        line = self.clean_output(raw, speaker.name)
-        beat = self._new_beat(speaker.name, speaker.emoji, line, "line")
+        return speaker, self._messages_for(speaker)
+
+    def commit_beat(self, speaker: Character, raw_text: str) -> Beat:
+        beat = self._new_beat(speaker.name, speaker.emoji,
+                              self.clean_output(raw_text, speaker.name), "line")
         self._append_and_evict(beat)
         self._advance_turn()
         return beat
 
-    # ---- view helpers (for the UI) ---------------------------------------- #
+    # ---- blocking API (tests / non-streaming) ------------------------------ #
+
+    def start_play(self, setting_key: str = "woodland", premise: str = "") -> Beat:
+        messages = self.prepare_opening(setting_key, premise)
+        return self.commit_opening(self.generate_fn(messages))
+
+    def advance(self, director_note: str = "") -> Beat:
+        speaker, messages = self.prepare_beat(director_note)
+        return self.commit_beat(speaker, self.generate_fn(messages))
+
+    # ---- view helpers ------------------------------------------------------ #
 
     def state(self) -> dict:
         return {

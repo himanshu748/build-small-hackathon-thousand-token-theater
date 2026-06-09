@@ -45,6 +45,7 @@ Built for the **Build Small Hackathon** · track *Adventure in Thousand Token Wo
 - **Model:** [`openbmb/MiniCPM4.1-8B`](https://huggingface.co/openbmb/MiniCPM4.1-8B) — an OpenBMB small model (≤32B) — loaded with `trust_remote_code=True` and run **on the Space's ZeroGPU (A10G)** via `@spaces.GPU`. Every line on stage is generated live; nothing is pre-written.
 - **The 1,000-token cap is real:** memory length is measured with MiniCPM's own tokenizer (`model.py::count_tokens`). When the running script exceeds the budget, the engine evicts the oldest beats (`theater.py::TheaterEngine._append_and_evict`). The actors are only ever shown what still fits, so the forgetting genuinely changes their behaviour.
 - **Reasoning mode off:** MiniCPM4.1 is run in non-thinking mode for snappy, in-character stage lines.
+- **Streamed live:** each line is streamed token-by-token (`TextIteratorStreamer`) so you watch the actors write in real time. Sampling follows MiniCPM's official no-think guidance (temperature 0.7, top_p 0.95).
 
 ## Architecture
 
