@@ -125,6 +125,7 @@ def render_meter(engine) -> str:
       <div class='meter-bottom'><span>🎭 {remembered} on stage</span>
         <span>🍂 {forgotten} forgotten</span></div>
       {edge}
+      <div class='meter-cap'>live count from the model's own tokenizer</div>
     </div>"""
 
 
@@ -244,6 +245,8 @@ CSS = """
 .meter-bar {height:13px; background:#251c16; border-radius:7px; overflow:hidden; margin:8px 0; box-shadow:inset 0 1px 3px rgba(0,0,0,.5);}
 .meter-fill {height:100%; border-radius:7px; transition:width .45s ease;}
 .meter-note {color:#e0903c; font-size:.82rem; margin-top:6px; font-style:italic;}
+.meter-cap {color:#7d7064; font-size:.72rem; margin-top:6px; font-style:italic; text-align:right;}
+#director-input textarea {min-height:74px !important;}
 .forgotten {background:#140f0d; border:1px dashed #3c3026; border-radius:12px; padding:11px 15px; font-size:.88rem; font-family:'EB Garamond',serif;}
 .forgotten.empty {color:#6f6458; font-style:italic;}
 .forgotten .ff-head {color:#b0703a; font-weight:700; margin:5px 0; text-transform:uppercase; letter-spacing:.1em; font-size:.72rem; font-family:'Playfair Display',serif;}
@@ -292,16 +295,20 @@ with gr.Blocks(title="Thousand-Token Theater") as demo:
             stage = gr.HTML(render_stage(None), elem_id="stage-html")
             with gr.Group(elem_classes="director-box"):
                 gr.HTML("<div class='director-head'>🎬 You are the Director</div>"
-                        "<div class='director-sub'>Whisper a stage direction and the troupe obeys — "
-                        "or just let the play roll on.</div>")
+                        "<div class='director-sub'>Whisper a stage direction — a line, an entrance, a reveal — "
+                        "and the troupe obeys. Tap an idea below, or just let the play roll on.</div>")
+                director_box = gr.Textbox(
+                    placeholder="e.g. 'a hooded stranger steps into the lantern-light and slowly lowers their hood'…",
+                    show_label=False, container=False, lines=3, elem_id="director-input",
+                )
                 with gr.Row():
-                    director_box = gr.Textbox(
-                        placeholder="e.g. 'a hooded stranger steps into the lantern-light'…",
-                        show_label=False, container=False, scale=5, lines=1,
-                        elem_id="director-input",
-                    )
-                    next_btn = gr.Button("Play it ▶", scale=1, variant="primary")
-                    twist_btn = gr.Button("Twist 🎲", scale=1)
+                    ex1 = gr.Button("🌩️ A storm breaks", size="sm", variant="secondary")
+                    ex2 = gr.Button("🗡️ An enemy returns", size="sm", variant="secondary")
+                    ex3 = gr.Button("🤫 Someone confesses", size="sm", variant="secondary")
+                    ex4 = gr.Button("👑 Reveal the secret", size="sm", variant="secondary")
+                with gr.Row():
+                    next_btn = gr.Button("Play it ▶", scale=2, variant="primary")
+                    twist_btn = gr.Button("Surprise me 🎲", scale=1)
             status = gr.Markdown(render_status(None))
             tts_audio = gr.Audio(label="🔊 The troupe speaks (VoxCPM)",
                                  autoplay=True, interactive=False, elem_id="tts-audio")
@@ -315,8 +322,8 @@ with gr.Blocks(title="Thousand-Token Theater") as demo:
             forgotten = gr.HTML(render_forgotten(None))
 
     gr.HTML(
-        "<div id='howto'>Runs <b>openbmb/MiniCPM4.1-8B</b> (script) + <b>openbmb/VoxCPM-0.5B</b> "
-        "(voices) live on ZeroGPU. The 1,000-token cap is enforced by MiniCPM's own tokenizer — "
+        "<div id='howto'>Runs <b>openbmb/MiniCPM3-4B</b> (script) + <b>openbmb/VoxCPM2</b> "
+        "(voices) live on ZeroGPU. The 1,000-token cap is enforced by the model's own tokenizer — "
         "the forgetting is real, not scripted.</div>"
     )
 
@@ -326,6 +333,10 @@ with gr.Blocks(title="Thousand-Token Theater") as demo:
                    [stage, meter, forgotten, status, engine_state, director_box, tts_audio])
     twist_btn.click(on_twist, [engine_state],
                     [stage, meter, forgotten, status, engine_state, director_box, tts_audio])
+    ex1.click(lambda: "A sudden storm breaks over the scene.", None, director_box)
+    ex2.click(lambda: "An old enemy strides in from the shadows.", None, director_box)
+    ex3.click(lambda: "One of you confesses a long-held secret.", None, director_box)
+    ex4.click(lambda: "Reveal who has secretly been hiding the truth.", None, director_box)
     demo.load(None, None, None, js=AUTOSCROLL_JS)
 
 if __name__ == "__main__":

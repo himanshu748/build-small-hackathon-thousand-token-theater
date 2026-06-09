@@ -1,18 +1,15 @@
 """
 The real model boundary for Thousand-Token Theater.
 
-Only file that touches MiniCPM. Runs openbmb/MiniCPM4.1-8B on the Space's
-ZeroGPU (A10G). Exposes:
+Only file that touches the models. Runs on the Space's ZeroGPU (A10G, 24GB):
+  - openbmb/MiniCPM3-4B  (~8GB bf16) writes the script.
+  - openbmb/VoxCPM2      (~8GB)      speaks each line, a distinct voice per actor.
+Both are OpenBMB models, together ~16GB → comfortable on the 24GB card. (MiniCPM4.1-8B
+is richer but 16GB + VoxCPM2's 8GB would exceed the card.)
 
-    MODEL_ID
-    count_tokens(text) -> int          # real MiniCPM tokenizer length (the cap)
-    generate(messages) -> str          # one full chat completion (blocking)
-    generate_stream(messages) -> gen   # yields cumulative text token-by-token
-
-ZeroGPU pattern (per HF docs): the model is placed on CUDA at MODULE level
-(CUDA-emulation at startup makes this work and it persists across calls);
-the GPU is actually attached only inside @spaces.GPU functions, which may be
-generators that yield. No mock, no fallback: failures surface.
+Exposes: MODEL_ID, count_tokens, generate, generate_stream, synthesize.
+ZeroGPU pattern: LLM placed on cuda at module level (CUDA emulation at startup);
+VoxCPM lazy-loads inside its @spaces.GPU function. No mock, no fallback.
 """
 
 from __future__ import annotations
@@ -26,7 +23,7 @@ import torch
 from huggingface_hub import snapshot_download
 from transformers import AutoModelForCausalLM, AutoTokenizer, TextIteratorStreamer
 
-MODEL_ID = "openbmb/MiniCPM4.1-8B"
+MODEL_ID = "openbmb/MiniCPM3-4B"
 
 print(f"[theater] loading tokenizer for {MODEL_ID} ...", flush=True)
 tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, trust_remote_code=True)
@@ -39,21 +36,19 @@ model = AutoModelForCausalLM.from_pretrained(
     low_cpu_mem_usage=True,
 ).to("cuda")
 model.eval()
-print("[theater] model ready.", flush=True)
+print("[theater] script model ready.", flush=True)
 
-# Official MiniCPM4.1 no-think sampling (model card): temperature 0.7, top_p 0.95.
 GEN = dict(do_sample=True, temperature=0.7, top_p=0.95, repetition_penalty=1.05)
 
 
 def count_tokens(text: str) -> int:
-    """Exact token length under MiniCPM's own tokenizer — this defines the cap."""
+    """Exact token length under the script model's tokenizer — this defines the cap."""
     if not text:
         return 0
     return len(tokenizer(text, add_special_tokens=False).input_ids)
 
 
 def _input_ids(messages):
-    """Apply the chat template with reasoning DISABLED (snappy stage lines)."""
     try:
         return tokenizer.apply_chat_template(
             messages, add_generation_prompt=True, return_tensors="pt",
@@ -67,7 +62,6 @@ def _input_ids(messages):
 
 @spaces.GPU(duration=120)
 def generate(messages, max_new_tokens: int = 220) -> str:
-    """One full chat completion (used by the blocking path / tests)."""
     input_ids = _input_ids(messages)
     with torch.no_grad():
         out = model.generate(input_ids, max_new_tokens=max_new_tokens,
@@ -77,7 +71,7 @@ def generate(messages, max_new_tokens: int = 220) -> str:
 
 @spaces.GPU(duration=120)
 def generate_stream(messages, max_new_tokens: int = 220):
-    """Generator: yields the cumulative line as MiniCPM writes it (live theatre)."""
+    """Generator: yields the cumulative line as the model writes it (live theatre)."""
     input_ids = _input_ids(messages)
     streamer = TextIteratorStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True)
     kwargs = dict(input_ids=input_ids, streamer=streamer, max_new_tokens=max_new_tokens,
@@ -95,20 +89,22 @@ def generate_stream(messages, max_new_tokens: int = 220):
 
 
 # --------------------------------------------------------------------------- #
-# VoxCPM — OpenBMB text-to-speech (the troupe's voices)
+# VoxCPM2 — OpenBMB text-to-speech (a distinct voice per character)
 # --------------------------------------------------------------------------- #
-TTS_MODEL_ID = "openbmb/VoxCPM-0.5B"  # ~5GB VRAM; coexists with the 8B LLM on the 24GB A10G
+TTS_MODEL_ID = "openbmb/VoxCPM2"
 
-# Distinct "Voice Design" descriptions per character (no reference audio needed).
+# "Voice Design": describe each voice in parentheses (no reference audio needed).
 VOICE = {
-    "The Narrator": "a warm, theatrical storyteller's voice, measured and resonant",
-    "Bramblewhisker": "a deep, grandiose old male voice, booming and dramatic",
-    "Pip": "a tiny, fast, breathless and anxious young voice",
-    "Maestro Croak": "a pompous, nasal, self-important male voice",
+    "The Narrator": "a warm, theatrical storyteller's voice, measured and resonant, mid-pitch",
+    "Bramblewhisker": "a deep, grandiose elderly male voice, booming and slow and dramatic",
+    "Pip": "a tiny, high-pitched, fast and breathless anxious young voice",
+    "Maestro Croak": "a pompous, nasal, gravelly self-important middle-aged male voice",
 }
+# Fixed seed per character so each voice stays consistent across lines (and distinct).
+SEED = {"The Narrator": 11, "Bramblewhisker": 23, "Pip": 42, "Maestro Croak": 77}
 
-# Pre-cache TTS weights to disk at startup (no CUDA here) so the first spoken
-# line doesn't pay a download inside the GPU window.
+# Pre-cache TTS weights to disk at startup (no CUDA here) so the first spoken line
+# doesn't pay a download inside the GPU window.
 try:
     snapshot_download(TTS_MODEL_ID)
     print("[theater] voice weights cached.", flush=True)
@@ -119,7 +115,7 @@ _tts = None
 
 
 def _get_tts():
-    """Lazy-load VoxCPM the first time we speak (inside the GPU context)."""
+    """Lazy-load VoxCPM2 the first time we speak (inside the GPU context)."""
     global _tts
     if _tts is None:
         from voxcpm import VoxCPM
@@ -138,6 +134,7 @@ def _voice_text(speaker: str, line: str) -> str:
 def synthesize(speaker: str, line: str):
     """Speak a line in the character's voice -> (sample_rate, float32 waveform)."""
     tts = _get_tts()
+    torch.manual_seed(SEED.get(speaker, 7))   # consistent, distinct voice per character
     wav = tts.generate(text=_voice_text(speaker, line), cfg_value=2.0, inference_timesteps=10)
     sr = int(getattr(getattr(tts, "tts_model", None), "sample_rate", 16000))
     return sr, np.asarray(wav, dtype=np.float32)
