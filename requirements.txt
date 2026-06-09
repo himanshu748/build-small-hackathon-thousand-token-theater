@@ -6,3 +6,5 @@ sentencepiece
 tiktoken
 protobuf
 einops
+voxcpm
+soundfile

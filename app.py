@@ -2,11 +2,12 @@
 Thousand-Token Theater — Gradio 6 Space for the Build Small Hackathon
 (track: Adventure in Thousand Token Wood).
 
-A troupe of small-model actors (MiniCPM4.1-8B on ZeroGPU) improvises a one-act
-play you direct. Each line is streamed live onto the stage as the model writes
-it. The troupe's whole shared memory is hard-capped at 1,000 tokens (MiniCPM's
-own tokenizer); past the cap the oldest beats are forgotten — and the play drifts.
-The model is genuinely invoked (see model.py); nothing on stage is pre-written.
+A troupe of small-model actors improvises a one-act play you direct, performed
+LIVE: each line is streamed onto the stage as openbmb/MiniCPM4.1-8B writes it,
+then SPOKEN aloud by openbmb/VoxCPM-0.5B in a distinct voice per character. The
+troupe's whole shared memory is hard-capped at 1,000 tokens (MiniCPM's own
+tokenizer); past the cap the oldest beats are forgotten — and the play drifts.
+Both models are genuinely invoked on ZeroGPU (see model.py); nothing is pre-written.
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ import re
 
 import gradio as gr
 
-import model  # real MiniCPM boundary (loads on the Space's GPU)
+import model  # real MiniCPM + VoxCPM boundary (loads on the Space's GPU)
 from theater import TheaterEngine, NARRATOR
 
 BUDGET = 1000
@@ -61,6 +62,15 @@ def _light_clean(text: str, name: str) -> str:
     t = re.sub(r"</?think>", "", t, flags=re.IGNORECASE)
     t = re.sub(rf"^\s*{re.escape(name)}\s*[:\-]\s*", "", t, flags=re.IGNORECASE)
     return t.strip()
+
+
+def _speak(speaker_name: str, line: str):
+    """Synthesize a spoken line; never let TTS failure break the play."""
+    try:
+        return model.synthesize(speaker_name, line)
+    except Exception as e:
+        print("[theater] TTS error:", repr(e)[:200], flush=True)
+        return None
 
 
 # --------------------------------------------------------------------------- #
@@ -143,7 +153,7 @@ def render_status(engine, msg: str = "") -> str:
 
 
 # --------------------------------------------------------------------------- #
-# Event handlers (streaming generators)
+# Event handlers (streaming generators; outputs end with the spoken-audio slot)
 # --------------------------------------------------------------------------- #
 
 def on_start(setting_label, premise, _engine):
@@ -154,10 +164,11 @@ def on_start(setting_label, premise, _engine):
     for partial in model.generate_stream(messages):
         live = (NARRATOR.name, NARRATOR.emoji, _light_clean(partial, NARRATOR.name))
         yield (render_stage(engine, live=live), render_meter(engine),
-               render_forgotten(engine), "🎙️ The Narrator sets the scene…", engine)
-    engine.commit_opening(partial)
+               render_forgotten(engine), "🎙️ The Narrator sets the scene…", engine, None)
+    beat = engine.commit_opening(partial)
     yield (render_stage(engine), render_meter(engine), render_forgotten(engine),
-           render_status(engine, "The curtain rises. Press ▶ to let the troupe play on."), engine)
+           render_status(engine, "The curtain rises. Press ▶ to let the troupe play on."),
+           engine, _speak(NARRATOR.name, beat.text))
 
 
 def _run_beat(engine, note, status_suffix):
@@ -166,16 +177,17 @@ def _run_beat(engine, note, status_suffix):
     for partial in model.generate_stream(messages):
         live = (speaker.name, speaker.emoji, _light_clean(partial, speaker.name))
         yield (render_stage(engine, live=live), render_meter(engine),
-               render_forgotten(engine), f"{speaker.emoji} **{speaker.name}** is speaking…", engine, "")
-    engine.commit_beat(speaker, partial)
+               render_forgotten(engine), f"{speaker.emoji} **{speaker.name}** is speaking…",
+               engine, "", None)
+    beat = engine.commit_beat(speaker, partial)
     yield (render_stage(engine), render_meter(engine), render_forgotten(engine),
-           render_status(engine, status_suffix), engine, "")
+           render_status(engine, status_suffix), engine, "", _speak(speaker.name, beat.text))
 
 
 def on_next(note, engine):
     if engine is None:
         yield (render_stage(None), render_meter(None), render_forgotten(None),
-               "Raise the curtain first 🎭", None, "")
+               "Raise the curtain first 🎭", None, "", None)
         return
     yield from _run_beat(engine, note or "", "")
 
@@ -183,7 +195,7 @@ def on_next(note, engine):
 def on_twist(engine):
     if engine is None:
         yield (render_stage(None), render_meter(None), render_forgotten(None),
-               "Raise the curtain first 🎭", None, "")
+               "Raise the curtain first 🎭", None, "", None)
         return
     twist = random.choice(TWISTS)
     yield from _run_beat(engine, twist, f"Twist thrown: *{twist}*")
@@ -206,7 +218,7 @@ CSS = """
   text-shadow:0 2px 18px rgba(224,151,90,.25); letter-spacing:.01em;}
 #playbill .rule {width:220px; height:1px; margin:8px auto 10px;
   background:linear-gradient(90deg,transparent,#caa46a,transparent);}
-#playbill p.tag {color:#c3b39a; font-family:'EB Garamond',serif; font-size:1.02rem; max-width:760px; margin:0 auto;}
+#playbill p.tag {color:#c3b39a; font-family:'EB Garamond',serif; font-size:1.02rem; max-width:780px; margin:0 auto;}
 .stage {background:
     linear-gradient(180deg, rgba(0,0,0,.35), rgba(0,0,0,.0) 18%),
     radial-gradient(120% 80% at 50% 120%, rgba(232,165,90,.10), transparent 55%),
@@ -239,6 +251,13 @@ CSS = """
 .just-forgot li {color:#d8b88c;}
 .old-forgot li {color:#6f6458;}
 #howto {color:#8f8273; font-family:'EB Garamond',serif; font-size:.92rem; text-align:center; margin-top:4px;}
+.director-box {border:1px solid #5a4326 !important; background:#1a130e !important; border-radius:14px !important;
+  padding:14px 16px 12px !important; margin-top:14px !important;
+  box-shadow:0 0 0 1px rgba(232,165,90,.16), 0 6px 22px rgba(0,0,0,.35) !important;}
+.director-head {font-family:'Playfair Display',serif; color:#f0c97a; font-size:1.14rem; font-weight:700; letter-spacing:.02em;}
+.director-sub {font-family:'EB Garamond',serif; color:#a99a86; font-size:.92rem; margin:1px 0 10px;}
+#director-input textarea, #director-input input {font-size:1.05rem !important; background:#120d0a !important;
+  border:1px solid #5a4326 !important; color:#f0e3cd !important;}
 """
 
 AUTOSCROLL_JS = """
@@ -263,22 +282,29 @@ with gr.Blocks(title="Thousand-Token Theater") as demo:
         "<h1>🎭 Thousand-Token Theater</h1>"
         "<div class='rule'></div>"
         "<p class='tag'>A troupe of tiny <b>MiniCPM</b> actors improvises a play you direct — "
-        "performed live, line by line. But their entire memory is capped at "
-        "<b>1,000 tokens</b>, so the story you build slowly drifts and forgets itself.</p>"
+        "performed live and <b>spoken aloud</b> by <b>VoxCPM</b>. But their entire memory is "
+        "capped at <b>1,000 tokens</b>, so the story you build slowly drifts and forgets itself.</p>"
         "</div>"
     )
 
     with gr.Row():
         with gr.Column(scale=3):
             stage = gr.HTML(render_stage(None), elem_id="stage-html")
-            with gr.Row():
-                director_box = gr.Textbox(
-                    placeholder="Whisper a stage direction… e.g. 'a stranger knocks' (or leave empty)",
-                    label="Director", scale=4, lines=1,
-                )
-                next_btn = gr.Button("Next beat ▶", scale=1, variant="primary")
-                twist_btn = gr.Button("Twist 🎲", scale=1)
+            with gr.Group(elem_classes="director-box"):
+                gr.HTML("<div class='director-head'>🎬 You are the Director</div>"
+                        "<div class='director-sub'>Whisper a stage direction and the troupe obeys — "
+                        "or just let the play roll on.</div>")
+                with gr.Row():
+                    director_box = gr.Textbox(
+                        placeholder="e.g. 'a hooded stranger steps into the lantern-light'…",
+                        show_label=False, container=False, scale=5, lines=1,
+                        elem_id="director-input",
+                    )
+                    next_btn = gr.Button("Play it ▶", scale=1, variant="primary")
+                    twist_btn = gr.Button("Twist 🎲", scale=1)
             status = gr.Markdown(render_status(None))
+            tts_audio = gr.Audio(label="🔊 The troupe speaks (VoxCPM)",
+                                 autoplay=True, interactive=False, elem_id="tts-audio")
         with gr.Column(scale=2):
             setting = gr.Dropdown(choices=list(SETTING_LABELS.keys()),
                                   value=list(SETTING_LABELS.keys())[0], label="Setting")
@@ -289,16 +315,17 @@ with gr.Blocks(title="Thousand-Token Theater") as demo:
             forgotten = gr.HTML(render_forgotten(None))
 
     gr.HTML(
-        "<div id='howto'>Runs <b>openbmb/MiniCPM4.1-8B</b> live on ZeroGPU. "
-        "The 1,000-token cap is enforced by MiniCPM's own tokenizer — the forgetting is real, not scripted.</div>"
+        "<div id='howto'>Runs <b>openbmb/MiniCPM4.1-8B</b> (script) + <b>openbmb/VoxCPM-0.5B</b> "
+        "(voices) live on ZeroGPU. The 1,000-token cap is enforced by MiniCPM's own tokenizer — "
+        "the forgetting is real, not scripted.</div>"
     )
 
     start_btn.click(on_start, [setting, premise, engine_state],
-                    [stage, meter, forgotten, status, engine_state])
+                    [stage, meter, forgotten, status, engine_state, tts_audio])
     next_btn.click(on_next, [director_box, engine_state],
-                   [stage, meter, forgotten, status, engine_state, director_box])
+                   [stage, meter, forgotten, status, engine_state, director_box, tts_audio])
     twist_btn.click(on_twist, [engine_state],
-                    [stage, meter, forgotten, status, engine_state, director_box])
+                    [stage, meter, forgotten, status, engine_state, director_box, tts_audio])
     demo.load(None, None, None, js=AUTOSCROLL_JS)
 
 if __name__ == "__main__":

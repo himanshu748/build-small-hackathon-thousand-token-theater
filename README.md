@@ -46,13 +46,14 @@ Built for the **Build Small Hackathon** · track *Adventure in Thousand Token Wo
 - **The 1,000-token cap is real:** memory length is measured with MiniCPM's own tokenizer (`model.py::count_tokens`). When the running script exceeds the budget, the engine evicts the oldest beats (`theater.py::TheaterEngine._append_and_evict`). The actors are only ever shown what still fits, so the forgetting genuinely changes their behaviour.
 - **Reasoning mode off:** MiniCPM4.1 is run in non-thinking mode for snappy, in-character stage lines.
 - **Streamed live:** each line is streamed token-by-token (`TextIteratorStreamer`) so you watch the actors write in real time. Sampling follows MiniCPM's official no-think guidance (temperature 0.7, top_p 0.95).
+- **Spoken aloud:** every committed line is voiced by [`openbmb/VoxCPM-0.5B`](https://huggingface.co/openbmb/VoxCPM-0.5B) — a second OpenBMB model — with a distinct *Voice Design* per character (no reference audio needed), running on the same ZeroGPU.
 
 ## Architecture
 
 | File | Role |
 | --- | --- |
 | `theater.py` | The improv engine: cast, turn order, prompt construction, and the bounded-memory / eviction logic. Model-agnostic (dependency-injected `generate_fn` + `count_tokens_fn`) so it is unit-testable without a GPU. |
-| `model.py` | The only file that touches MiniCPM. Loads the model on ZeroGPU and exposes `generate()` and `count_tokens()`. No mock or fallback. |
+| `model.py` | The only file that touches the models. Loads MiniCPM4.1-8B (script) on ZeroGPU and lazy-loads VoxCPM-0.5B (voices); exposes `generate()`, `generate_stream()`, `count_tokens()`, and `synthesize()`. No mock or fallback. |
 | `app.py` | The Gradio stage: script view, the 1,000-token memory meter, and the "Forgotten to the Wood" panel. |
 | `test_engine.py` | Local logic test using a deterministic stub (no model) to verify the budget is never exceeded, eviction works, and turns rotate. |
 
