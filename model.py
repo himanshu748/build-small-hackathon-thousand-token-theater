@@ -60,7 +60,7 @@ def _input_ids(messages):
         ).to(model.device)
 
 
-@spaces.GPU(duration=120)
+@spaces.GPU(duration=180)
 def generate(messages, max_new_tokens: int = 220) -> str:
     input_ids = _input_ids(messages)
     with torch.no_grad():
@@ -69,7 +69,7 @@ def generate(messages, max_new_tokens: int = 220) -> str:
     return tokenizer.decode(out[0][input_ids.shape[-1]:], skip_special_tokens=True).strip()
 
 
-@spaces.GPU(duration=120)
+@spaces.GPU(duration=180)
 def generate_stream(messages, max_new_tokens: int = 220):
     """Generator: yields the cumulative line as the model writes it (live theatre)."""
     input_ids = _input_ids(messages)

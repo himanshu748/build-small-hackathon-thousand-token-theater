@@ -65,13 +65,14 @@ def _light_clean(text: str, name: str) -> str:
 
 
 def _speak(speaker_name: str, line: str):
-    """Synthesize a spoken line; never let TTS failure break the play."""
+    """Synthesize a spoken line; never let TTS failure break the play.
+    Returns (audio_or_None, error_message_or_None)."""
     try:
-        return model.synthesize(speaker_name, line)
-    except Exception:
+        return model.synthesize(speaker_name, line), None
+    except Exception as e:
         import traceback
         print("[theater] TTS error:\n" + traceback.format_exc(), flush=True)
-        return None
+        return None, f"{type(e).__name__}: {e}"[:180]
 
 
 # --------------------------------------------------------------------------- #
@@ -168,9 +169,10 @@ def on_start(setting_label, premise, _engine):
         yield (render_stage(engine, live=live), render_meter(engine),
                render_forgotten(engine), "🎙️ The Narrator sets the scene…", engine, None)
     beat = engine.commit_opening(partial)
+    audio, err = _speak(NARRATOR.name, beat.text)
+    msg = ("🔇 voice error: " + err) if err else "The curtain rises. Press ▶ to let the troupe play on."
     yield (render_stage(engine), render_meter(engine), render_forgotten(engine),
-           render_status(engine, "The curtain rises. Press ▶ to let the troupe play on."),
-           engine, _speak(NARRATOR.name, beat.text))
+           render_status(engine, msg), engine, audio)
 
 
 def _run_beat(engine, note, status_suffix):
@@ -182,8 +184,12 @@ def _run_beat(engine, note, status_suffix):
                render_forgotten(engine), f"{speaker.emoji} **{speaker.name}** is speaking…",
                engine, "", None)
     beat = engine.commit_beat(speaker, partial)
+    audio, err = _speak(speaker.name, beat.text)
+    suffix = status_suffix
+    if err:
+        suffix = (status_suffix + " · " if status_suffix else "") + "🔇 voice error: " + err
     yield (render_stage(engine), render_meter(engine), render_forgotten(engine),
-           render_status(engine, status_suffix), engine, "", _speak(speaker.name, beat.text))
+           render_status(engine, suffix), engine, "", audio)
 
 
 def on_next(note, engine):
