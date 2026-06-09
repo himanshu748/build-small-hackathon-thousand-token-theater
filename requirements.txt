@@ -1,0 +1,8 @@
+spaces
+torch
+transformers==4.56.1
+accelerate
+sentencepiece
+tiktoken
+protobuf
+einops
