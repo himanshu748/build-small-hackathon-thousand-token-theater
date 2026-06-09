@@ -156,8 +156,9 @@ class TheaterEngine:
             f"You are {speaker.name}, {speaker.persona}. "
             f"You are one actor in a troupe improvising a LIVE one-act play. Rules:\n"
             f"- Speak ONLY as {speaker.name}; never write another character's lines.\n"
-            f"- Reply with 1 to 3 short, vivid theatrical lines: dialogue, plus at most "
-            f"one brief *stage action* in asterisks.\n"
+            f"- Reply with just 1 to 2 SHORT sentences (about 45 words MAX). This is fast "
+            f"improv, not a monologue — vivid but brief, and finish your thought.\n"
+            f"- Put any stage action in *single asterisks*, e.g. *bows low*.\n"
             f"- Always write in natural English.\n"
             f"- You can ONLY remember what appears in SCRIPT SO FAR. If a detail isn't "
             f"there, it has been forgotten — never contradict the script; you may be "
@@ -180,8 +181,9 @@ class TheaterEngine:
             f"Open a brand-new improvised one-act play set in {scene}. "
             f"Tonight's troupe: {cast_desc}. "
             + (f"The Director's premise: {premise}. " if premise else "")
-            + "In ONE or TWO vivid sentences, set the scene and hint at a tension. "
-            "Do not speak any character's lines."
+            + "In at most TWO short sentences (about 40 words total), set the scene and "
+            "hint at a tension. Be vivid but BRIEF — do not write a long paragraph, and "
+            "do not speak any character's lines."
         )
         return [{"role": "system", "content": system},
                 {"role": "user", "content": user}]
@@ -197,6 +199,11 @@ class TheaterEngine:
             text = text[1:-1].strip()
         lines = [ln for ln in (l.strip() for l in text.splitlines()) if ln]
         text = "\n".join(lines[:4]).strip()
+        # If the model was cut off mid-sentence, trim back to the last completed sentence.
+        if text and text[-1] not in '.!?…"\'’”*)':
+            cut = max((text.rfind(c) for c in '.!?…'), default=-1)
+            if cut >= 40:
+                text = text[:cut + 1].strip()
         return text or "*falls silent, having lost the thread*"
 
     # ---- streaming-friendly API (used by the app) -------------------------- #

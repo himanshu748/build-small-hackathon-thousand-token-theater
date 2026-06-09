@@ -68,8 +68,9 @@ def _speak(speaker_name: str, line: str):
     """Synthesize a spoken line; never let TTS failure break the play."""
     try:
         return model.synthesize(speaker_name, line)
-    except Exception as e:
-        print("[theater] TTS error:", repr(e)[:200], flush=True)
+    except Exception:
+        import traceback
+        print("[theater] TTS error:\n" + traceback.format_exc(), flush=True)
         return None
 
 

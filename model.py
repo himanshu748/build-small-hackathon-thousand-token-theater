@@ -130,11 +130,14 @@ def _voice_text(speaker: str, line: str) -> str:
     return f"({desc}) {spoken}" if desc else spoken
 
 
-@spaces.GPU(duration=90)
+@spaces.GPU(duration=180)
 def synthesize(speaker: str, line: str):
-    """Speak a line in the character's voice -> (sample_rate, float32 waveform)."""
+    """Speak a line in the character's voice -> (sample_rate, float32 waveform).
+    duration=180 covers the one-time VoxCPM2 load + warm-up on the very first call."""
     tts = _get_tts()
     torch.manual_seed(SEED.get(speaker, 7))   # consistent, distinct voice per character
     wav = tts.generate(text=_voice_text(speaker, line), cfg_value=2.0, inference_timesteps=10)
     sr = int(getattr(getattr(tts, "tts_model", None), "sample_rate", 16000))
-    return sr, np.asarray(wav, dtype=np.float32)
+    wav = np.clip(np.asarray(wav, dtype=np.float32).squeeze(), -1.0, 1.0)   # 1-D float32
+    print(f"[theater] synth ok: {speaker}, {wav.shape[0]} samples @ {sr}Hz", flush=True)
+    return sr, wav
