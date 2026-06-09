@@ -60,7 +60,7 @@ def _input_ids(messages):
         ).to(model.device)
 
 
-@spaces.GPU(duration=180)
+@spaces.GPU(duration=120)
 def generate(messages, max_new_tokens: int = 220) -> str:
     input_ids = _input_ids(messages)
     with torch.no_grad():
@@ -69,7 +69,7 @@ def generate(messages, max_new_tokens: int = 220) -> str:
     return tokenizer.decode(out[0][input_ids.shape[-1]:], skip_special_tokens=True).strip()
 
 
-@spaces.GPU(duration=180)
+@spaces.GPU(duration=120)
 def generate_stream(messages, max_new_tokens: int = 220):
     """Generator: yields the cumulative line as the model writes it (live theatre)."""
     input_ids = _input_ids(messages)
@@ -130,10 +130,10 @@ def _voice_text(speaker: str, line: str) -> str:
     return f"({desc}) {spoken}" if desc else spoken
 
 
-@spaces.GPU(duration=180)
+@spaces.GPU(duration=120)
 def synthesize(speaker: str, line: str):
     """Speak a line in the character's voice -> (sample_rate, float32 waveform).
-    duration=180 covers the one-time VoxCPM2 load + warm-up on the very first call."""
+    duration=120 covers the one-time VoxCPM2 load + warm-up on the very first call."""
     tts = _get_tts()
     torch.manual_seed(SEED.get(speaker, 7))   # consistent, distinct voice per character
     wav = tts.generate(text=_voice_text(speaker, line), cfg_value=2.0, inference_timesteps=10)
@@ -141,3 +141,16 @@ def synthesize(speaker: str, line: str):
     wav = np.clip(np.asarray(wav, dtype=np.float32).squeeze(), -1.0, 1.0)   # 1-D float32
     print(f"[theater] synth ok: {speaker}, {wav.shape[0]} samples @ {sr}Hz", flush=True)
     return sr, wav
+
+
+@spaces.GPU(duration=120)
+def warmup_voice():
+    """Preload VoxCPM2 once (fired by the app's load event) so the first spoken
+    line doesn't pay the model-load cost inside its own GPU window."""
+    try:
+        _get_tts()
+        print("[theater] voice warmed up.", flush=True)
+        return "voice ready"
+    except Exception as e:
+        print("[theater] voice warmup failed:", repr(e)[:200], flush=True)
+        return "voice unavailable"

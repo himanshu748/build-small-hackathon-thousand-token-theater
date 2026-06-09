@@ -345,6 +345,7 @@ with gr.Blocks(title="Thousand-Token Theater") as demo:
     ex3.click(lambda: "One of you confesses a long-held secret.", None, director_box)
     ex4.click(lambda: "Reveal who has secretly been hiding the truth.", None, director_box)
     demo.load(None, None, None, js=AUTOSCROLL_JS)
+    demo.load(model.warmup_voice, None, None)  # preload VoxCPM2 so the first synth is fast
 
 if __name__ == "__main__":
     # Gradio 6: theme and css go to launch(), not the Blocks constructor.
