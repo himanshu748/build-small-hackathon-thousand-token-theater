@@ -18,7 +18,6 @@ tags:
   - zerogpu
   - track:thousand-token-wood
   - sponsor:openbmb
-  - sponsor:openai
   - achievement:offgrid
   - achievement:offbrand
   - achievement:fieldnotes
@@ -58,9 +57,8 @@ No public traces are claimed for this project yet.
 - OpenBMB angle: MiniCPM is the live model powering the actors, the memory count, and the 1,000-token constraint.
 - Off-Brand angle: custom theater/playbill UI with stage, director controls, live memory meter, and Forgotten panel.
 - Off the Grid angle: the app avoids external cloud model APIs; generation runs through the model loaded on the Space runtime.
-- OpenAI Codex angle: public GitHub repo is linked as build evidence.
 
-Not claimed: Sharing is Caring, Tiny Titan, Llama Champion, Modal, Well-Tuned, or Best Agent.
+Not claimed: OpenAI Codex, Sharing is Caring, Tiny Titan, Llama Champion, Modal, Well-Tuned, or Best Agent.
 
 ## How to play
 
