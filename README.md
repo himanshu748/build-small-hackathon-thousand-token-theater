@@ -15,6 +15,15 @@ tags:
   - thousand-token-wood
   - minicpm
   - openbmb
+  - zerogpu
+  - track:thousand-token-wood
+  - sponsor:openbmb
+  - sponsor:openai
+  - achievement:offgrid
+  - achievement:offbrand
+  - achievement:fieldnotes
+models:
+  - openbmb/MiniCPM4.1-8B
 ---
 
 # 🎭 Thousand-Token Theater
@@ -32,6 +41,27 @@ living demonstration of what a small context window does to a story.
 
 Built for the **Build Small Hackathon** · track *Adventure in Thousand Token Wood*.
 
+## Submission Evidence
+
+- Live Space: https://huggingface.co/spaces/build-small-hackathon/thousand-token-theater
+- Public GitHub evidence repo: https://github.com/himanshu748/build-small-hackathon-thousand-token-theater
+- Demo video + social post: https://x.com/i/status/2064354192748110158
+- Field Notes / build report: [docs/field-notes.md](docs/field-notes.md)
+
+No public traces are claimed for this project yet.
+
+## Hackathon Fit
+
+- Track: Adventure in Thousand Token Wood.
+- Build surface: custom Gradio `Blocks` app hosted as a Hugging Face Space.
+- Model rule: uses `openbmb/MiniCPM4.1-8B`, an OpenBMB small model under the `<=32B` limit.
+- OpenBMB angle: MiniCPM is the live model powering the actors, the memory count, and the 1,000-token constraint.
+- Off-Brand angle: custom theater/playbill UI with stage, director controls, live memory meter, and Forgotten panel.
+- Off the Grid angle: the app avoids external cloud model APIs; generation runs through the model loaded on the Space runtime.
+- OpenAI Codex angle: public GitHub repo is linked as build evidence.
+
+Not claimed: Sharing is Caring, Tiny Titan, Llama Champion, Modal, Well-Tuned, or Best Agent.
+
 ## How to play
 
 1. Pick a **setting** (woodland fable, noir alley, derelict starship, royal banquet) and an optional **premise**.
@@ -46,6 +76,7 @@ Built for the **Build Small Hackathon** · track *Adventure in Thousand Token Wo
 - **The 1,000-token cap is real:** memory length is measured with MiniCPM's own tokenizer (`model.py::count_tokens`). When the running script exceeds the budget, the engine evicts the oldest beats (`theater.py::TheaterEngine._append_and_evict`). The actors are only ever shown what still fits, so the forgetting genuinely changes their behaviour.
 - **Snappy lines:** short, in-character generation (no chain-of-thought); sampling temperature 0.7 / top_p 0.95.
 - **Streamed live:** each line is streamed token-by-token (`TextIteratorStreamer`) so you watch the actors write in real time. Sampling follows MiniCPM's official no-think guidance (temperature 0.7, top_p 0.95).
+
 ## Architecture
 
 | File | Role |
