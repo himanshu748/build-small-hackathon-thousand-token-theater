@@ -74,7 +74,7 @@ def _model_inputs(messages):
 
 
 @spaces.GPU(duration=120)
-def generate(messages, max_new_tokens: int = 220) -> str:
+def generate(messages, max_new_tokens: int = 140) -> str:
     """One full chat completion (used by the blocking path / tests)."""
     inputs = _model_inputs(messages)
     in_len = inputs["input_ids"].shape[-1]
@@ -85,7 +85,7 @@ def generate(messages, max_new_tokens: int = 220) -> str:
 
 
 @spaces.GPU(duration=120)
-def generate_stream(messages, max_new_tokens: int = 220):
+def generate_stream(messages, max_new_tokens: int = 140):
     """Generator: yields the cumulative line as MiniCPM writes it (live theatre)."""
     inputs = _model_inputs(messages)
     streamer = TextIteratorStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True)

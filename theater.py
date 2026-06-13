@@ -156,8 +156,10 @@ class TheaterEngine:
             f"You are {speaker.name}, {speaker.persona}. "
             f"You are one actor in a troupe improvising a LIVE one-act play. Rules:\n"
             f"- Speak ONLY as {speaker.name}; never write another character's lines.\n"
-            f"- Reply with just 1 to 2 SHORT sentences (about 45 words MAX). This is fast "
-            f"improv, not a monologue — vivid but brief, and finish your thought.\n"
+            f"- Reply with ONE short sentence (about 25 words MAX). This is fast improv, "
+            f"not a monologue — vivid but brief, and finish your thought.\n"
+            f"- Do NOT begin with your name or a 'Name:' label, and never refer to yourself "
+            f"by name in the third person — speak in the FIRST person.\n"
             f"- Put any stage action in *single asterisks*, e.g. *bows low*.\n"
             f"- Always write in natural English.\n"
             f"- You can ONLY remember what appears in SCRIPT SO FAR. If a detail isn't "
@@ -181,9 +183,9 @@ class TheaterEngine:
             f"Open a brand-new improvised one-act play set in {scene}. "
             f"Tonight's troupe: {cast_desc}. "
             + (f"The Director's premise: {premise}. " if premise else "")
-            + "In at most TWO short sentences (about 40 words total), set the scene and "
-            "hint at a tension. Be vivid but BRIEF — do not write a long paragraph, and "
-            "do not speak any character's lines."
+            + "In ONE or two short sentences (about 30 words total), set the scene and "
+            "hint at a tension. Be vivid but BRIEF. Do not list or introduce the cast by "
+            "name, and do not speak any character's lines."
         )
         return [{"role": "system", "content": system},
                 {"role": "user", "content": user}]
@@ -194,7 +196,14 @@ class TheaterEngine:
         text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL | re.IGNORECASE)
         text = re.sub(r"</?think>", "", text, flags=re.IGNORECASE)
         text = text.strip()
-        text = re.sub(rf"^\s*{re.escape(speaker_name)}\s*[:\-]\s*", "", text, flags=re.IGNORECASE)
+        # Strip a leading speaker label the small model may emit (the UI header
+        # already shows the name, so repeating it looks bad): "Name:", "Name - ",
+        # "**Name**:", "Name, the badger, declares:", bare "Name," etc.
+        text = text.replace("**", "")  # drop markdown bold; only single * is used (stage actions)
+        text = re.sub(rf"^\s*[>\"'“”\[(]*\s*{re.escape(speaker_name)}\b[^\n:]{{0,40}}:\s*",
+                      "", text, count=1, flags=re.IGNORECASE)
+        text = re.sub(rf"^\s*[>\"'“”\[(]*\s*{re.escape(speaker_name)}\s*[:,\-–—]\s*",
+                      "", text, count=1, flags=re.IGNORECASE)
         if len(text) >= 2 and text[0] in "\"'“”" and text[-1] in "\"'“”":
             text = text[1:-1].strip()
         lines = [ln for ln in (l.strip() for l in text.splitlines()) if ln]

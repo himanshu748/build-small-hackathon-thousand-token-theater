@@ -74,7 +74,11 @@ def new_engine() -> TheaterEngine:
 def _light_clean(text: str, name: str) -> str:
     t = re.sub(r"<think>.*?</think>", "", text or "", flags=re.DOTALL | re.IGNORECASE)
     t = re.sub(r"</?think>", "", t, flags=re.IGNORECASE)
-    t = re.sub(rf"^\s*{re.escape(name)}\s*[:\-]\s*", "", t, flags=re.IGNORECASE)
+    # Strip a leading "Name:" / "Name, the badger says:" / "**Name**:" label so the
+    # character's name isn't duplicated next to the stage header while streaming.
+    t = t.replace("**", "")  # drop markdown bold; only single * is used (stage actions)
+    t = re.sub(rf"^\s*[>\"'“”\[(]*\s*{re.escape(name)}\b[^\n:]{{0,40}}:\s*", "", t, count=1, flags=re.IGNORECASE)
+    t = re.sub(rf"^\s*[>\"'“”\[(]*\s*{re.escape(name)}\s*[:,\-–—]\s*", "", t, count=1, flags=re.IGNORECASE)
     return t.strip()
 
 
