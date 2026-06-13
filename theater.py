@@ -177,15 +177,13 @@ class TheaterEngine:
 
     def _opening_messages(self, setting_key: str, premise: str) -> list:
         scene = SETTINGS.get(setting_key, SETTINGS["woodland"])
-        cast_desc = "; ".join(f"{c.name} ({c.emoji}) — {c.persona}" for c in self.cast)
         system = (f"You are {NARRATOR.name}, {NARRATOR.persona} Always write in natural English.")
         user = (
             f"Open a brand-new improvised one-act play set in {scene}. "
-            f"Tonight's troupe: {cast_desc}. "
             + (f"The Director's premise: {premise}. " if premise else "")
-            + "In ONE or two short sentences (about 30 words total), set the scene and "
-            "hint at a tension. Be vivid but BRIEF. Do not list or introduce the cast by "
-            "name, and do not speak any character's lines."
+            + "In ONE or two short sentences (about 30 words total), set the scene and hint "
+            "at a tension. Be vivid but BRIEF. Do NOT name or introduce any characters — just "
+            "evoke the place and mood; the players introduce themselves when they speak."
         )
         return [{"role": "system", "content": system},
                 {"role": "user", "content": user}]
