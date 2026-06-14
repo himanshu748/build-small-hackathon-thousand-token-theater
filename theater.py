@@ -211,6 +211,11 @@ class TheaterEngine:
             cut = max((text.rfind(c) for c in '.!?…'), default=-1)
             if cut >= 40:
                 text = text[:cut + 1].strip()
+        # Keep beats snappy AND fully voiceable: cap to the first 2 sentences so the
+        # single spoken clip is short, fast, and read start-to-finish (no skipped lines).
+        parts = re.split(r"(?<=[.!?…])\s+", text)
+        if len(parts) > 2:
+            text = " ".join(parts[:2]).strip()
         return text or "*falls silent, having lost the thread*"
 
     # ---- streaming-friendly API (used by the app) -------------------------- #

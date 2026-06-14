@@ -97,27 +97,21 @@ def _split_sentences(text: str):
     return parts or [text]
 
 
-def _speak_sentences(speaker_name: str, text: str, voices_on: bool):
-    """Yield (audio_value, voice_note) for each speakable sentence, autoplayed in order.
+def _speak_line(speaker_name: str, text: str, voices_on: bool):
+    """Synthesize the WHOLE line as ONE clip, so the voice reads all of it.
 
-    voice.synthesize is a regular @spaces.GPU call that the warm-up never touches, so
-    it gets a clean worker and runs reliably from the handler. We call it once per
-    sentence so the voice arrives in chunks (each autoplays as it's ready) instead of
-    one long clip after the line. On a real synth error we surface an honest note and
-    keep going — never a fake voice. Pure-action sentences (no speakable words) are
-    skipped.
+    (Per-sentence clips were pushed to a single autoplay player, which can only play
+    one at a time — so later sentences got dropped and the voice "skipped lines".
+    One clip per beat plays the entire line start-to-finish.) Returns (audio, note);
+    on a real synth error we surface an honest note — never a fake voice.
     """
     if not voices_on:
-        return
-    vnote = ""
-    for sent in _split_sentences(text):
-        clip = None
-        try:
-            clip = voice.synthesize(sent, speaker_name)
-        except Exception as e:  # noqa: BLE001 — report, never fake
-            vnote = f" · 🔇 voice unavailable ({str(e)[:60]})"
-        if clip is not None:
-            yield clip, vnote
+        return None, ""
+    try:
+        clip = voice.synthesize(text, speaker_name)
+        return clip, ""
+    except Exception as e:  # noqa: BLE001 — report, never fake
+        return None, f" · 🔇 voice unavailable ({str(e)[:60]})"
 
 
 # --------------------------------------------------------------------------- #
@@ -304,13 +298,13 @@ def on_start(setting_label, premise, voices_on, _engine):
         yield (render_stage(engine, live=live), render_meter(engine),
                render_forgotten(engine), "🎙️ The Narrator sets the scene…", engine, gr.update())
     beat = engine.commit_opening(partial)
-    vnote = ""
-    for audio, vnote in _speak_sentences(NARRATOR.name, beat.text, voices_on):
+    if voices_on:
         yield (render_stage(engine), render_meter(engine), render_forgotten(engine),
-               "🎙️ The Narrator speaks…" + vnote, engine, audio)
+               "🎙️ The Narrator speaks the scene aloud…", engine, gr.update())
+    audio, vnote = _speak_line(NARRATOR.name, beat.text, voices_on)
     yield (render_stage(engine), render_meter(engine), render_forgotten(engine),
            render_status(engine, "The curtain rises. Press ▶ to let the troupe play on." + vnote),
-           engine, gr.update())
+           engine, audio)
 
 
 def _run_beat(engine, note, voices_on, status_suffix):
@@ -322,12 +316,12 @@ def _run_beat(engine, note, voices_on, status_suffix):
                render_forgotten(engine), f"{speaker.emoji} **{speaker.name}** is speaking…",
                engine, "", gr.update())
     beat = engine.commit_beat(speaker, partial)
-    vnote = ""
-    for audio, vnote in _speak_sentences(speaker.name, beat.text, voices_on):
+    if voices_on:
         yield (render_stage(engine), render_meter(engine), render_forgotten(engine),
-               f"🎙️ {speaker.name} speaks…" + vnote, engine, "", audio)
+               f"🎙️ {speaker.name} speaks aloud…", engine, "", gr.update())
+    audio, vnote = _speak_line(speaker.name, beat.text, voices_on)
     yield (render_stage(engine), render_meter(engine), render_forgotten(engine),
-           render_status(engine, (status_suffix + vnote).strip(" ·")), engine, "", gr.update())
+           render_status(engine, (status_suffix + vnote).strip(" ·")), engine, "", audio)
 
 
 def on_next(note, voices_on, engine):

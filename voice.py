@@ -132,7 +132,7 @@ def _ensure_ref(voice_key: str) -> str:
         return path
 
 
-@spaces.GPU(duration=90)
+@spaces.GPU(duration=150)
 def synthesize(text: str, voice_key: str):
     """Speak `text` in `voice_key`'s voice. Returns (sample_rate, wav) or None.
 
